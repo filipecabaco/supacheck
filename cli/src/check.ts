@@ -1,9 +1,10 @@
 // Core check: facts-engine rules always run; model rules only when a model is supplied.
 // Shared by the CLI (text/json/sarif) and the MCP server.
-import { existsSync, lstatSync, readdirSync } from 'node:fs'
-import { join, relative, resolve } from 'node:path'
+import { existsSync, lstatSync, readFileSync, readdirSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
+import { dirname, join, relative, resolve } from 'node:path'
 import { chunksFor, withFacts } from './chunks.js'
-import { buildFacts } from './facts.js'
+import { buildFacts, type Facts } from './facts.js'
 import { buildTsFacts, factsFor } from './tsfacts.js'
 import { alwaysTrueWrite, definerNoCallerCheck, firstSignupAdmin, rlsDisabled, serviceRolePolicyWithoutTo, grantWriteWithoutRls, missingGrants, policyAuthenticated, selectTrueOnPrivate, singleVerdict, sqlFactLines, suppressedBy, tsExtraVerdicts, tsRuleVerdict, userMetadataSql, userMetadataTs } from './checks.js'
 import { applicable, loadRules, type Rule } from './rules.js'
@@ -26,13 +27,23 @@ export async function runCheck(root: string, opts: CheckOptions = {}): Promise<{
   const rules = loadRules(opts.rulesDir ?? defaultRulesDir())
   const byId = new Map(rules.map((r) => [r.id, r]))
   const findings: Finding[] = []
-  const sql = await buildFacts(projectRoot)
+  const files = listFiles(projectRoot)
+
+  // One fact store per Supabase project: SQL never mixes across projects (monorepos, vendored examples)
+  const groups = new Map<string, string[]>()
+  for (const f of files.filter((x) => x.endsWith('.sql'))) {
+    const root = supabaseRoot(f, projectRoot)
+    groups.set(root, [...(groups.get(root) ?? []), f])
+  }
+  const stores: Facts[] = []
+  for (const [root, sqlFiles] of groups) stores.push(await buildFacts(root, sqlFiles, projectRoot))
 
   const base = (r: Rule) => ({ severity: r.severity, message: r.message, fix: r.fix, avoid: (r as any).avoid ?? [], docs_url: r.docs_url })
   const report = (id: string, file: string, line: number, because: string[]) => {
     const r = byId.get(id)
     if (r) findings.push({ rule_id: id, engine: 'facts', file, line, because, ...base(r) })
   }
+  for (const sql of stores) {
   const on = (id: string) => { const e = String((byId.get(id) as any)?.engine ?? ''); return e === 'facts' || (e === 'facts-experimental' && !!opts.experimental) }
   for (const fn of sql.functions.values()) {
     const v = definerNoCallerCheck(fn, sql); if (v.flagged) report('definer-function-no-caller-check', fn.file, fn.line, v.because)
@@ -56,9 +67,10 @@ export async function runCheck(root: string, opts: CheckOptions = {}): Promise<{
     const w = grantWriteWithoutRls(t, sql); if (w.flagged) report('grant-write-without-rls', t.file, t.line, w.because)
     else { const d = rlsDisabled(t, sql); if (d.flagged) report('rls-disabled-on-exposed-table', t.file, t.line, d.because) }
   }
+  }
 
-  const files = walk(projectRoot)
-  const ts = buildTsFacts(projectRoot)
+  const ts = buildTsFacts(projectRoot, files.filter((f) => !f.endsWith('.sql')))
+  const sqlFor = (rel: string) => stores.find((st) => st.policies.some((p) => p.file === rel) || st.history.some((fn) => fn.file === rel) || [...st.tables.values()].some((t) => t.file === rel))
 
   // TS rules decided by facts + code (getSession always; edge-function/admin-client while below the bar: --experimental)
   const tsRules = rules.filter((r) => (r as any).engine === 'facts' || ((r as any).engine === 'facts-experimental' && opts.experimental))
@@ -90,7 +102,8 @@ export async function runCheck(root: string, opts: CheckOptions = {}): Promise<{
         const asked = rules.filter((r) => !String((r as any).engine ?? '').startsWith('facts') && applicable(r, chunk) && model.meta.rules.includes(r.id))
         if (!asked.length) continue
         const rel = relative(projectRoot, resolve(chunk.file))
-        const facts = rel.endsWith('.sql') ? sqlFactLines(sql, rel, chunk.line) : factsFor(ts, rel, chunk.state)
+        const st = rel.endsWith('.sql') ? sqlFor(rel) : undefined
+        const facts = rel.endsWith('.sql') ? (st ? sqlFactLines(st, rel, chunk.line) : []) : factsFor(ts, rel, chunk.state)
         const state = withFacts(chunk.state, facts)
         const probs = await score(model, state)
         for (const r of asked) {
@@ -115,6 +128,32 @@ function dedupe(findings: Finding[]): Finding[] {
     seen.add(k)
     return true
   })
+}
+
+/** Nearest ancestor (within the scan root) that holds a supabase/ project; else the file's own directory. */
+function supabaseRoot(file: string, scanRoot: string): string {
+  let dir = dirname(file)
+  while (dir.startsWith(scanRoot)) {
+    if (existsSync(join(dir, 'supabase', 'config.toml')) || existsSync(join(dir, 'supabase', 'migrations'))) return dir
+    if (dir === scanRoot) break
+    dir = dirname(dir)
+  }
+  const m = /^(.*)\/supabase\/(migrations|schemas)\//.exec(file)
+  return m ? m[1] : dirname(file)
+}
+
+/** Files git tracks or would track (respects .gitignore), minus .supacheckignore; falls back to a walk. */
+export function listFiles(root: string): string[] {
+  let files: string[]
+  try {
+    const out = execFileSync('git', ['-C', root, 'ls-files', '-co', '--exclude-standard'], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'] })
+    files = out.split('\n').filter(Boolean).map((f) => join(root, f)).filter((f) => /\.(tsx?|jsx?|sql)$/.test(f) && !/\.(test|spec)\.[tj]sx?$/.test(f) && existsSync(f))
+  } catch {
+    files = walk(root)
+  }
+  const ignoreFile = join(root, '.supacheckignore')
+  const ignores = existsSync(ignoreFile) ? readFileSync(ignoreFile, 'utf8').split('\n').map((l) => l.trim()).filter((l) => l && !l.startsWith('#')) : []
+  return files.filter((f) => !ignores.some((pat) => relative(root, f).startsWith(pat.replace(/^\//, '').replace(/\*+$/, ''))))
 }
 
 export function walk(p: string): string[] {

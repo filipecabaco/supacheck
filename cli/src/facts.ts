@@ -23,10 +23,14 @@ export type Facts = { tables: Map<string, Table>; policies: Policy[]; functions:
 const CALLER = /auth\.(uid|jwt|role|email)\s*\(|current_user|session_user|request\.jwt\.claims?/i
 const SKIP_DIRS = new Set(['node_modules', '.git', 'dist', '.next', 'tests', 'test', '__tests__', 'e2e'])
 
-export async function buildFacts(repoDir: string): Promise<Facts> {
+/**
+ * Replay one Supabase project's SQL. `files` (absolute) restricts the replay to that project's files;
+ * paths in the result stay relative to `reportRoot` (the scan root) so findings point at real paths.
+ */
+export async function buildFacts(repoDir: string, files?: string[], reportRoot = repoDir): Promise<Facts> {
   const facts: Facts = { tables: new Map(), policies: [], functions: new Map(), history: [], exposed: exposedSchemas(repoDir), schemaGrants: new Map() }
-  for (const file of sqlFiles(repoDir).sort()) {
-    const rel = relative(repoDir, file)
+  for (const file of (files ?? sqlFiles(repoDir)).filter((f) => f.endsWith('.sql')).sort()) {
+    const rel = relative(reportRoot, file)
     if (/seed|test|spec|fixture/i.test(rel)) continue
     for (const st of await statements(file)) apply(facts, st, rel)
   }

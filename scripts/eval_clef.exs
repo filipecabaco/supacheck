@@ -14,8 +14,8 @@ defmodule EvalClef do
     {opts, _} = OptionParser.parse!(argv, strict: [server: :string, limit: :integer, jev: :boolean])
     jev = opts[:jev]
     server = Keyword.get(opts, :server, if(jev, do: "https://api.typesafe.ai", else: "http://127.0.0.1:8089"))
-    Process.put(:req_extra, if(jev, do: [auth: {:bearer, env_key(root, "JEV_API_KEY")}], else: []))
-    Process.put(:model, if(jev, do: "jev-latest"))
+    # request options passed explicitly (no process dictionary)
+    req = %{extra: if(jev, do: [auth: {:bearer, env_key(root, "JEV_API_KEY")}], else: []), model: if(jev, do: "jev-latest")}
     limit = Keyword.get(opts, :limit, 400)
 
     questions =
@@ -28,8 +28,8 @@ defmodule EvalClef do
     test = read_jsonl(Path.join(root, "data/generated/test.jsonl")) |> Enum.shuffle() |> Enum.take(limit)
     :rand.seed(:exsss, {1, 2, 3})
 
-    gold_scored = score(gold, questions, server)
-    test_scored = score(test, questions, server)
+    gold_scored = score(gold, questions, server, req)
+    test_scored = score(test, questions, server, req)
 
     report = %{"gold" => confusion(gold_scored), "test" => per_rule(test_scored)}
     out = Path.join(root, if(jev, do: "artifacts/jev-zero-shot", else: "artifacts/clef-flash-zero-shot"))
@@ -40,15 +40,12 @@ defmodule EvalClef do
     for {rule, m} <- Enum.sort(report["test"]), do: IO.puts("  #{String.pad_trailing(rule, 40)} #{inspect(m)}")
   end
 
-  defp score(rows, questions, server) do
-    extra = Process.get(:req_extra, [])
-    model = Process.get(:model)
-
+  defp score(rows, questions, server, %{extra: extra, model: model}) do
     rows
     |> Task.async_stream(
       fn r ->
         body = %{state: r["state"], questions: %{"q" => questions[r["rule"]]}}
-        body = if model, do: Map.put(body, :model, model), else: body
+        body = maybe_model(body, model)
         resp = Req.post!(server <> "/v1/systemone", [json: body, receive_timeout: 120_000, retry: :transient] ++ extra)
         # A failed request has no score. Never let it reach a comparison: nil >= 0.5 is true in Erlang term order.
         case get_in(resp.body, ["answers", "q", "noul"]) do
@@ -64,6 +61,9 @@ defmodule EvalClef do
       ok
     end)
   end
+
+  defp maybe_model(body, nil), do: body
+  defp maybe_model(body, model), do: Map.put(body, :model, model)
 
   defp confusion(scored, thr \\ 0.5) do
     c = Enum.frequencies_by(scored, fn {_, p, y} -> {p >= thr, y == 1} end)

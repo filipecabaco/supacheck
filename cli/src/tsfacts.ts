@@ -11,9 +11,9 @@ export type TsFacts = { mods: Map<string, Mod>; side: Map<string, 'server' | 'cl
 const SKIP = new Set(['node_modules', '.git', 'dist', '.next', 'build', 'coverage'])
 const EXTS = ['', '.ts', '.tsx', '.js', '.jsx', '/index.ts', '/index.tsx', '/index.js']
 
-export function buildTsFacts(root: string): TsFacts {
+export function buildTsFacts(root: string, files?: string[]): TsFacts {
   const mods = new Map<string, Mod>()
-  for (const file of walk(root)) {
+  for (const file of files ?? walk(root)) {
     const code = readFileSync(file, 'utf8')
     const parsed = parseSync(file, code, { sourceType: 'module', lang: file.endsWith('x') ? 'tsx' : 'ts' })
     const imports: Mod['imports'] = []

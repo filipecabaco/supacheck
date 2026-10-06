@@ -6,9 +6,9 @@ import { parseSync } from 'oxc-parser';
 import { tsContext } from './chunks.js';
 const SKIP = new Set(['node_modules', '.git', 'dist', '.next', 'build', 'coverage']);
 const EXTS = ['', '.ts', '.tsx', '.js', '.jsx', '/index.ts', '/index.tsx', '/index.js'];
-export function buildTsFacts(root) {
+export function buildTsFacts(root, files) {
     const mods = new Map();
-    for (const file of walk(root)) {
+    for (const file of files ?? walk(root)) {
         const code = readFileSync(file, 'utf8');
         const parsed = parseSync(file, code, { sourceType: 'module', lang: file.endsWith('x') ? 'tsx' : 'ts' });
         const imports = [];

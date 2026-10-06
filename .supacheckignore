@@ -1,0 +1,6 @@
+# supacheck scanning its own repo: only the demo app is a Supabase project
+cli/
+data/
+training/
+scripts/
+knowledge/

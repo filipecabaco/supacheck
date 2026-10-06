@@ -23,9 +23,9 @@ can't see TypeScript.
 node cli/dist/cli.js check examples/demo-app
 
 # or straight from GitHub once pushed (replace <org>)
-npx github:filipecabaco/supacheck check path/to/your/project
-npx github:filipecabaco/supacheck check . --format json     # for agents / scripts
-npx github:filipecabaco/supacheck check . --format sarif    # GitHub code scanning
+npx -y github:filipecabaco/supacheck check path/to/your/project
+npx -y github:filipecabaco/supacheck check . --format json     # for agents / scripts
+npx -y github:filipecabaco/supacheck check . --format sarif    # GitHub code scanning
 ```
 
 `examples/demo-app` is a small Supabase project with one seeded issue per rule. `cd cli && pnpm test`
@@ -84,7 +84,7 @@ agents with repo facts visible, plus human review.
 ## For agents
 
 ```json
-{ "mcpServers": { "supacheck": { "command": "npx", "args": ["github:filipecabaco/supacheck", "mcp"] } } }
+{ "mcpServers": { "supacheck": { "command": "npx", "args": ["-y", "github:filipecabaco/supacheck", "mcp"] } } }
 ```
 
 Claude Code hook: run `supacheck check . --format json` after edits to migrations or Supabase code.
