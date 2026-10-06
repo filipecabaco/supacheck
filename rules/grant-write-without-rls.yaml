@@ -1,0 +1,10 @@
+id: grant-write-without-rls
+domain: sql
+engine: facts
+severity: critical
+message: "anon/authenticated can write this table and RLS is not enabled, so anyone with the publishable key can modify every row. Often added to 'fix' a 42501 error."
+fix: "Enable row level security on the table and add scoped policies before granting write access; never fix 42501 with GRANT ALL on a table without RLS."
+docs_url: https://supabase.com/docs/guides/database/postgres/row-level-security
+avoid:
+  - "keep the grant and rely on the frontend to restrict writes"
+  - "use the service-role key in the client"

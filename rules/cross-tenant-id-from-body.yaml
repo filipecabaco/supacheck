@@ -1,0 +1,18 @@
+id: cross-tenant-id-from-body
+domain: sdk
+engine: facts-experimental
+applies_to: [server, edge-function]
+trigger: "req.json(|request.json("
+question:
+  type: noul
+  instructions: "Does this handler use a tenant/org/team id from the request body with a privileged client without checking the caller belongs to that tenant?"
+  criteria:
+    "true": "the caller is authenticated but the body-supplied tenant id is trusted for privileged reads/writes"
+    "false": "membership is checked, the tenant comes from the verified user/claims, or a user-scoped client lets RLS enforce it"
+  labels: { "true": "A", "false": "B" }
+severity: high
+message: "The caller is authenticated, but a tenant/org id from the request body is used with a privileged client without checking the caller belongs to that tenant (cross-tenant access)."
+fix: "Check membership for the caller and the requested tenant (e.g. a members table lookup with the caller's id), or use a user-scoped client so RLS enforces it."
+docs_url: https://supabase.com/docs/guides/database/postgres/row-level-security
+avoid:
+  - "trust the tenant id because the user is signed in"

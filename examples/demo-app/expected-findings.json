@@ -1,0 +1,87 @@
+[
+ {
+  "rule_id": "server-trusts-getsession",
+  "file": "src/app/api/billing/route.ts",
+  "line": 6
+ },
+ {
+  "rule_id": "service-role-in-request-handler",
+  "file": "src/app/api/billing/route.ts",
+  "line": 6
+ },
+ {
+  "rule_id": "single-where-maybe-single",
+  "file": "src/app/profile/page.ts",
+  "line": 5
+ },
+ {
+  "rule_id": "ef-service-role-trusts-body-identity",
+  "file": "supabase/functions/notify/index.ts",
+  "line": 4
+ },
+ {
+  "rule_id": "service-role-in-request-handler",
+  "file": "supabase/functions/notify/index.ts",
+  "line": 4
+ },
+ {
+  "rule_id": "missing-api-grants-new-table",
+  "file": "supabase/migrations/20261101000000_init.sql",
+  "line": 3
+ },
+ {
+  "rule_id": "select-true-on-private-data",
+  "file": "supabase/migrations/20261101000000_init.sql",
+  "line": 11
+ },
+ {
+  "rule_id": "grant-write-without-rls",
+  "file": "supabase/migrations/20261101000000_init.sql",
+  "line": 15
+ },
+ {
+  "rule_id": "rls-disabled-on-exposed-table",
+  "file": "supabase/migrations/20261101000000_init.sql",
+  "line": 23
+ },
+ {
+  "rule_id": "missing-api-grants-new-table",
+  "file": "supabase/migrations/20261101000000_init.sql",
+  "line": 29
+ },
+ {
+  "rule_id": "service-role-policy-without-to",
+  "file": "supabase/migrations/20261101000000_init.sql",
+  "line": 35
+ },
+ {
+  "rule_id": "missing-api-grants-new-table",
+  "file": "supabase/migrations/20261101000000_init.sql",
+  "line": 38
+ },
+ {
+  "rule_id": "rls-policy-always-true-write",
+  "file": "supabase/migrations/20261101000000_init.sql",
+  "line": 45
+ },
+ {
+  "rule_id": "missing-api-grants-new-table",
+  "file": "supabase/migrations/20261101000000_init.sql",
+  "line": 48
+ },
+ {
+  "rule_id": "team-wide-access-confirm-signup",
+  "file": "supabase/migrations/20261101000000_init.sql",
+  "line": 55
+ },
+ {
+  "rule_id": "user-metadata-for-authorization",
+  "file": "supabase/migrations/20261101000000_init.sql",
+  "line": 69
+ },
+ {
+  "rule_id": "definer-function-no-caller-check",
+  "file": "supabase/migrations/20261101000000_init.sql",
+  "line": 82
+ }
+]

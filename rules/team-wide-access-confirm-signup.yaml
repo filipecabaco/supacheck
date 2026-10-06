@@ -1,0 +1,16 @@
+id: team-wide-access-confirm-signup
+domain: sql
+engine: facts
+question:
+  type: noul
+  instructions: "Does this policy give every signed-in user access to the whole table (team-wide), with nothing tying rows to a user or tenant?"
+  criteria:
+    "true": "the predicate only checks sign-in (or is true for authenticated) and the table has no per-user/tenant scoping"
+    "false": "rows are scoped to the caller, a tenant/team membership, or the table is public by design for anon too"
+  labels: { "true": "A", "false": "B" }
+severity: info
+message: "This policy lets every signed-in user access the whole table (team-wide). That's fine for single-tenant team apps only if sign-up is restricted (invite-only / domain allowlist); with open sign-up it's effectively public."
+fix: "Confirm sign-up is restricted (disable public sign-ups or allowlist domains), or scope the policy to a team/tenant membership."
+docs_url: https://supabase.com/docs/guides/auth/general-configuration
+avoid:
+  - "rely on the UI not linking to the data"

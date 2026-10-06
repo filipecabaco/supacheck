@@ -1,0 +1,19 @@
+id: admin-client-for-user-scoped-work
+domain: sdk
+engine: facts-experimental
+languages: [ts, js]
+applies_to: [server, edge-function]
+trigger: "SERVICE_ROLE|SECRET_KEY|sb_secret|supabaseAdmin|adminClient"
+severity: high
+question:
+  type: noul
+  instructions: Does this server code use a service-role or secret-key client to read or write data on behalf of a single signed-in user?
+  criteria:
+    "true": the privileged client performs ordinary per-user reads or writes that a user-scoped client under RLS could do
+    "false": the privileged client is used for genuinely administrative work (auth.admin, cron, webhooks, cross-user jobs), or a user-scoped client is used
+  labels: { "true": "A", "false": "B" }
+message: "A service-role client bypasses RLS for ordinary per-user work, moving authorization into hand-written checks."
+fix: "Use a user-scoped client (createServerClient with the user's cookies, or the caller's Authorization header) so RLS applies."
+docs_url: https://supabase.com/docs/guides/api/api-keys
+avoid:
+  - "add a manual .eq('user_id', ...) and keep the service-role client"

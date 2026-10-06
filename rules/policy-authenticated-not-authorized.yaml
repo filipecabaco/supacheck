@@ -1,0 +1,20 @@
+id: policy-authenticated-not-authorized
+domain: sql
+engine: facts-experimental
+languages: [sql]
+applies_to: [policy]
+trigger: "create policy"
+severity: high
+question:
+  type: noul
+  instructions: Does this policy let any signed-in user access rows that belong to other users or tenants?
+  criteria:
+    "true": the predicate only checks that someone is signed in (auth.role() = 'authenticated', auth.uid() is not null, to authenticated using (true)) on per-user or per-tenant data
+    "false": the predicate ties rows to the caller (owner column, membership, tenant) or the table is intentionally shared by all users
+  labels: { "true": "A", "false": "B" }
+message: "This policy authorizes any signed-in user (including anonymous sign-ins), not the row's owner or tenant."
+fix: "Scope the predicate to the caller, e.g. using ((select auth.uid()) = user_id), or to a membership check."
+docs_url: https://supabase.com/docs/guides/database/postgres/row-level-security
+avoid:
+  - "replace it with using (true)"
+  - "drop RLS to unblock queries"

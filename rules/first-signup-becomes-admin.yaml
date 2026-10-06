@@ -1,0 +1,16 @@
+id: first-signup-becomes-admin
+domain: sql
+engine: facts-experimental
+question:
+  type: noul
+  instructions: "Does this trigger make a user admin/owner because a table is empty (first signup) rather than by an explicit grant?"
+  criteria:
+    "true": "the role is granted when a count/exists check shows no existing users/rows"
+    "false": "admin is granted explicitly (seed, allowlist, invitation) or not at all"
+  labels: { "true": "A", "false": "B" }
+severity: high
+message: "A signup trigger makes the first user (empty table) an admin/owner. On an open project, whoever signs up first after a reset, or on a new environment, takes over."
+fix: "Grant the initial admin explicitly (migration seed, dashboard or an allowlisted email), not from table emptiness at signup."
+docs_url: https://supabase.com/docs/guides/auth/managing-user-data
+avoid:
+  - "keep the trigger and hope you sign up first"

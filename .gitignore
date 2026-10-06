@@ -1,0 +1,23 @@
+# generated data and model artifacts
+data/generated/
+artifacts/
+models/
+*.onnx
+*.onnx.data
+*.gguf
+
+# python
+training/.venv/
+__pycache__/
+*.egg-info/
+
+# node
+cli/node_modules/
+
+.DS_Store
+data/gold/cache/
+
+# secrets
+.env*
+cli/rules/
+erl_crash.dump

@@ -1,0 +1,20 @@
+id: ef-service-role-trusts-body-identity
+domain: sdk
+engine: facts
+languages: [ts]
+applies_to: [edge-function, server]
+trigger: "req.json("
+severity: warning
+question:
+  type: noul
+  instructions: Does this handler act on a user or resource id taken from the request body without first verifying who the caller is?
+  criteria:
+    "true": ids from the request body are used to read or write data and the caller is never verified by JWT or shared secret
+    "false": the caller is verified (getUser, getClaims, withSupabase auth, or a signature/shared-secret check) before ids are used, or the ids come from the verified user, or a user-scoped client built from the caller's Authorization header is used so RLS applies
+  labels: { "true": "A", "false": "B" }
+message: "This function uses an id from the request body with a privileged client and never verifies the caller, so anyone can act on any user's data."
+fix: "Verify the caller first (supabase.auth.getUser(token) / getClaims(), or withSupabase({ auth: 'user' })) and use the verified user id."
+docs_url: https://supabase.com/docs/guides/functions/auth
+avoid:
+  - "rely on verify_jwt alone (the anon key is a valid JWT)"
+  - "check the user id from the body against itself"

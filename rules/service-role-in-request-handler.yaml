@@ -1,0 +1,18 @@
+id: service-role-in-request-handler
+domain: sdk
+engine: facts
+applies_to: [server, edge-function]
+trigger: "SERVICE_ROLE|SECRET_KEY|sb_secret|supabaseAdmin|adminClient"
+question:
+  type: noul
+  instructions: "Is a service-role (RLS-bypassing) client used inside a request handler (route, action, server function, edge function)?"
+  criteria:
+    "true": "the handler creates or uses a service-role/secret-key client to read or write data"
+    "false": "only user-scoped clients are used, or the service-role use is outside a request handler"
+  labels: { "true": "A", "false": "B" }
+severity: info
+message: "A service-role client (bypasses RLS) is used inside a request handler. Every authorization decision now depends on hand-written checks in this code path."
+fix: "Prefer a user-scoped client (createServerClient with the user's cookies, or the caller's Authorization header) and keep service-role use to admin-only paths (auth.admin, cron, webhooks)."
+docs_url: https://supabase.com/docs/guides/api/api-keys
+avoid:
+  - "pass the service-role key to the browser to avoid RLS errors"

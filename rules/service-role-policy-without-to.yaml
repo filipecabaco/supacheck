@@ -1,0 +1,9 @@
+id: service-role-policy-without-to
+domain: sql
+engine: facts
+severity: high
+message: "This policy is named for the service role but has no TO service_role clause, so it applies to everyone. The service role bypasses RLS anyway; the policy only opens the table to anon/authenticated."
+fix: "Drop the policy (service_role doesn't need one), or add TO service_role if it's meant for it."
+docs_url: https://supabase.com/docs/guides/database/postgres/row-level-security
+avoid:
+  - "keep it because 'the backend needs it'"

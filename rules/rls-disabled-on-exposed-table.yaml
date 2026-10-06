@@ -1,0 +1,10 @@
+id: rls-disabled-on-exposed-table
+domain: sql
+engine: facts
+severity: critical
+message: "This table is in a schema exposed through the Data API and row level security is never enabled, so anyone with the anon/publishable key can read and write it."
+fix: "alter table <table> enable row level security; then add policies scoped to the caller."
+docs_url: https://supabase.com/docs/guides/database/postgres/row-level-security
+avoid:
+  - "rely on the frontend not querying the table"
+  - "fix later errors by granting all to anon"

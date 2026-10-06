@@ -1,0 +1,19 @@
+id: server-trusts-getsession
+domain: sdk
+engine: facts
+languages: [ts, js]
+applies_to: [server]          # chunk context must be server-side
+trigger: "getSession("         # cheap pre-filter: only chunks containing this are asked
+severity: high
+question:
+  type: noul
+  instructions: Is the session returned by getSession() used to decide whether this server request is allowed, or whose data it reads or writes?
+  criteria:
+    "true": the session or its user id decides access, ownership, or which rows are read or written
+    "false": the session is only displayed, forwarded to an API that verifies it, or checked after getUser()/getClaims()
+  labels: { "true": "A", "false": "B" }
+message: "Server code trusts getSession(), which reads the cookie without revalidating the JWT, so the session can be spoofed."
+fix: "Use supabase.auth.getClaims() (or getUser()) on the server before making access decisions."
+docs_url: https://supabase.com/docs/guides/auth/server-side/creating-a-client
+avoid:
+  - "decode the access token with atob/jwt-decode without verifying it"

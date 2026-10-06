@@ -1,0 +1,11 @@
+id: missing-api-grants-new-table
+domain: sql
+engine: facts
+severity: warning
+message: "Policies give anon/authenticated access to this table, but no GRANT does. From 2026-10-30 Supabase stops auto-granting new public tables, so Data API calls fail with 42501."
+fix: "Add explicit grants for the roles your policies target, e.g. grant select on public.<table> to anon; grant select, insert, update, delete on public.<table> to authenticated;"
+docs_url: https://supabase.com/docs/guides/api/securing-your-api
+avoid:
+  - "grant all on the table to anon"
+  - "grant all on all tables in schema public to anon/authenticated"
+  - "disable RLS to make 42501 go away"

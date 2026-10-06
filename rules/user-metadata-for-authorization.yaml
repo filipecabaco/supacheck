@@ -1,0 +1,20 @@
+id: user-metadata-for-authorization
+domain: sql
+engine: facts
+languages: [sql, ts]
+applies_to: [policy, function, trigger, server]
+trigger: "user_metadata|raw_user_meta_data"
+severity: critical
+question:
+  type: noul
+  instructions: Is a user_metadata or raw_user_meta_data field used to grant a role, permission, plan or ownership?
+  criteria:
+    "true": the metadata value decides access or is copied into a role, admin, plan or permission field
+    "false": the metadata is only used for display values like name or avatar, or authorization uses app_metadata or a roles table
+  labels: { "true": "A", "false": "B" }
+message: "user_metadata can be changed by the user (updateUser, sign-up options), so using it for authorization is privilege escalation."
+fix: "Store authorization data in app_metadata or a roles table that users cannot write."
+docs_url: https://supabase.com/docs/guides/database/postgres/row-level-security
+avoid:
+  - "validate the metadata value in the frontend"
+  - "move the check into user_metadata of the JWT (still user-writable)"

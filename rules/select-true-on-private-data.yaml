@@ -1,0 +1,20 @@
+id: select-true-on-private-data
+domain: sql
+engine: facts
+languages: [sql]
+applies_to: [policy]
+trigger: "for select"
+severity: warning
+question:
+  type: noul
+  instructions: Does this select policy expose rows that look private or per-user to everyone who can query the table?
+  criteria:
+    "true": the policy is always true (or only checks sign-in) and the table holds personal or per-user data such as emails, orders, messages or payments
+    "false": the table is intentionally public (catalogue, published posts, public profiles without sensitive columns) or the predicate scopes rows to the caller
+  labels: { "true": "A", "false": "B" }
+message: "This select policy makes per-user or personal data readable by everyone with the anon or publishable key."
+fix: "Scope the select to the owner, e.g. using ((select auth.uid()) = user_id), or move public columns to a separate table or view."
+docs_url: https://supabase.com/docs/guides/database/postgres/row-level-security
+avoid:
+  - "disable RLS on the table"
+  - "add a second permissive policy (policies are OR-ed, the true one still applies)"

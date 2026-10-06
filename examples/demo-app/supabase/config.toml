@@ -1,0 +1,7 @@
+project_id = "demo-app"
+
+[api]
+schemas = ["public", "graphql_public"]
+
+[functions.notify]
+verify_jwt = false

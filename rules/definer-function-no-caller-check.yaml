@@ -1,0 +1,20 @@
+id: definer-function-no-caller-check
+domain: sql
+engine: facts
+languages: [sql]
+applies_to: [function]
+trigger: "security definer"
+severity: critical
+question:
+  type: noul
+  instructions: Does this security definer function act on rows chosen by its parameters without checking who is calling it?
+  criteria:
+    "true": parameters choose which user's or tenant's rows are read or changed and the body never checks auth.uid(), auth.jwt() or a role
+    "false": the body checks the caller (auth.uid(), role, membership) or only touches the caller's own rows, or execute is revoked from anon and authenticated
+  labels: { "true": "A", "false": "B" }
+message: "A security definer function bypasses RLS and trusts caller-supplied parameters without checking the caller."
+fix: "Check the caller inside the body (where user_id = (select auth.uid())), move it to a non-exposed schema, and revoke execute from public, anon, authenticated."
+docs_url: https://supabase.com/docs/guides/database/functions#security-definer-vs-invoker
+avoid:
+  - "revoke execute only from public (anon/authenticated keep access on Supabase)"
+  - "switch to security invoker if callers then lose access they need: add an auth.uid() check instead"

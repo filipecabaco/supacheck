@@ -1,0 +1,38 @@
+{
+  "name": "supacheck",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "supacheck": "./dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc -p . && rm -rf rules && cp -R ../rules rules",
+    "dev": "tsx src/cli.ts",
+    "validate-samples": "tsx src/validate-samples.ts",
+    "bench": "tsx src/bench.ts",
+    "review-web": "tsx src/review-server.ts",
+    "test": "tsx src/test-demo.ts"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "dependencies": {
+    "@huggingface/transformers": "4.3.0",
+    "highlight.js": "11.12.0",
+    "libpg-query": "18.1.5",
+    "onnxruntime-node": "1.30.0",
+    "oxc-parser": "0.153.0",
+    "yaml": "2.9.1"
+  },
+  "devDependencies": {
+    "@types/node": "26.6.4",
+    "tsx": "4.23.15",
+    "typescript": "7.0.2"
+  },
+  "description": "Local checks for Supabase projects: SQL migrations and supabase-js code, for people and coding agents",
+  "files": [
+    "dist",
+    "rules"
+  ]
+}

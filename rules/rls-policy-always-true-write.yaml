@@ -1,0 +1,9 @@
+id: rls-policy-always-true-write
+domain: sql
+engine: facts
+severity: high
+message: "A write policy (insert/update/delete/all) is always true, so RLS is on but does nothing for writes. Often added 'to make the error go away'."
+fix: "Scope the write: using / with check ((select auth.uid()) = <owner column>). For intentional public inserts (contact forms), restrict columns and rate-limit."
+docs_url: https://supabase.com/docs/guides/database/postgres/row-level-security
+avoid:
+  - "add a second permissive policy (policies are OR-ed, the true one still applies)"

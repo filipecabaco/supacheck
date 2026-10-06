@@ -1,0 +1,19 @@
+id: single-where-maybe-single
+domain: sdk
+engine: facts
+languages: [ts, js]
+applies_to: [server, client, edge-function]
+trigger: ".single()"
+severity: info
+question:
+  type: noul
+  instructions: Can this .single() lookup legitimately find no matching row?
+  criteria:
+    "true": zero rows is an expected outcome here (optional profile, lookup by email or slug, existence check)
+    "false": exactly one row is guaranteed (lookup by primary key just inserted, insert().select().single(), or an error is the right outcome)
+  labels: { "true": "A", "false": "B" }
+message: ".single() returns an error (PGRST116) when no row matches; this lookup can legitimately be empty."
+fix: "Use .maybeSingle() and handle the null case explicitly."
+docs_url: https://supabase.com/docs/reference/javascript/maybesingle
+avoid:
+  - "wrap it in try/catch and ignore PGRST116 errors"
