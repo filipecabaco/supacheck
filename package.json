@@ -4,12 +4,33 @@
   "description": "Local checks for Supabase projects (SQL migrations + supabase-js), for people and coding agents",
   "type": "module",
   "bin": { "supacheck": "cli/dist/cli.js" },
-  "files": ["cli/dist", "rules", "examples/demo-app"],
+  "files": [
+    "cli/dist/cli.js",
+    "cli/dist/check.js",
+    "cli/dist/checks.js",
+    "cli/dist/chunks.js",
+    "cli/dist/facts.js",
+    "cli/dist/mcp.js",
+    "cli/dist/model.js",
+    "cli/dist/rules.js",
+    "cli/dist/runtime.js",
+    "cli/dist/scorer.js",
+    "cli/dist/tsfacts.js",
+    "cli/dist/tui.js",
+    "cli/dist/vendor",
+    "rules"
+  ],
   "engines": { "node": ">=22" },
   "dependencies": {
-    "highlight.js": "11.12.0",
+    "@clack/prompts": "1.8.1",
+    "commander": "15.0.0",
     "libpg-query": "18.1.5",
     "oxc-parser": "0.153.0",
+    "picocolors": "1.1.1",
+    "wrap-ansi": "10.0.2",
     "yaml": "2.9.1"
+  },
+  "optionalDependencies": {
+    "onnxruntime-node": "1.30.0"
   }
 }

@@ -226,6 +226,8 @@ function render({ progress, item }) {
       el('div', { class: 'teacher' }, 'teacher', bar, item.teacher_p.toFixed(2))),
     ...(item.facts?.length ? [el('div', { class: 'card facts' }, el('div', { class: 'q' }, 'Repo facts'), el('ul', {}, ...item.facts.map((f) => el('li', {}, f))))] : []),
     ...(item.prev_label != null ? [el('div', { class: 'card meta' }, 'Re-review: previously labelled ' + (item.prev_label ? 'yes' : 'no') + (item.prev_note ? ' — ' + item.prev_note : ''))] : []),
+    ...(item.agent_label != null ? [el('div', { class: 'card meta' }, 'Spot-check: agent suggests ' + (item.agent_label ? 'yes' : 'no') + (item.agent_note ? ' — ' + item.agent_note : '')
+      + (item.committee ? ' · models: ' + Object.entries(item.committee).map(([m, p]) => m + ' ' + Number(p).toFixed(2)).join(', ') : ''))] : []),
     el('div', { class: 'card' }, el('div', { class: 'q' }, q.instructions),
       el('div', { class: 'crit y' }, el('b', {}, 'yes: '), q.criteria.true), el('div', { class: 'crit n' }, el('b', {}, 'no: '), q.criteria.false)),
     el('div', { class: 'card' }, note),

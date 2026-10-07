@@ -1,7 +1,8 @@
 // Evaluate an artifact on the real-code gold set (data/gold/manifest.jsonl).
 // Files are fetched at their pinned commit into a git-ignored cache; only URLs + labels are committed.
 //
-//   pnpm tsx src/eval-gold.ts <artifact dir> [--verbose]
+//   pnpm tsx src/eval-gold.ts <artifact dir> [--verbose] [--tune] [--facts-engine] [--json <file>]
+//   --json: write the scored rows (test repos only with --tune) for per-rule analysis
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { join, resolve } from 'node:path'
@@ -87,12 +88,15 @@ for (const e of entries) {
   chunk.state = withFacts(chunk.state, facts)
   const suppressed = useFacts ? suppressedBy(e.rule, chunk.state, facts) : undefined
   const decided = factsEngine ? await factsDecision(e.rule, chunk, facts, e.url) : undefined
+  // rules this model doesn't judge still get a state (other models read states.jsonl) but no score
+  if (decided === undefined && !suppressed && !model.meta.rules.includes(e.rule)) { results.push({ ...e, status: 'not in model', state: chunk.state }); continue }
   const p = decided !== undefined ? decided : suppressed ? 0 : (await score(model, chunk.state))[e.rule]
   const thr = model.meta.thresholds[e.rule] ?? 0.5
   results.push({ ...e, status: 'scored', p, predicted: p >= thr ? 1 : 0, thr, state: chunk.state })
 }
 
 let scored = results.filter((r: any) => r.status === 'scored') as any[]
+const unscored = results.filter((r: any) => r.status === 'not in model') as any[]
 if (tune) {
   // Per rule: lowest threshold reaching precision >= 0.9 on the calibration repos (else 0.5), applied to test repos.
   const calib = scored.filter((r) => isCalib(r.url))
@@ -108,7 +112,9 @@ if (tune) {
   console.log(`held-out test repos: ${new Set(scored.map((r) => repoOf(r.url))).size}, items: ${scored.length}`)
 }
 // Same chunk texts for the Python-side typed baselines (Laya, Clef): cache only, never committed.
-writeFileSync(join(cacheDir, 'states.jsonl'), scored.map((r) => JSON.stringify({ rule: r.rule, label: r.label, url: r.url, state: r.state })).join('\n') + '\n')
+writeFileSync(join(cacheDir, 'states.jsonl'), scored.concat(tune ? unscored.filter((r) => !isCalib(r.url)) : unscored).map((r) => JSON.stringify({ rule: r.rule, label: r.label, url: r.url, state: r.state })).join('\n') + '\n')
+const jsonOut = process.argv.includes('--json') ? process.argv[process.argv.indexOf('--json') + 1] : undefined
+if (jsonOut) writeFileSync(jsonOut, scored.map((r) => JSON.stringify({ rule: r.rule, label: r.label, url: r.url, p: r.p, predicted: r.predicted })).join('\n') + '\n')
 const tp = scored.filter((r) => r.label === 1 && r.predicted === 1).length
 const fp = scored.filter((r) => r.label === 0 && r.predicted === 1).length
 const fn = scored.filter((r) => r.label === 1 && r.predicted === 0).length

@@ -2,7 +2,7 @@
 // anti-pattern each, keeping real repo facts. Original = negative, mutation = positive, for that rule.
 // Closes the synthetic→real gap: same code style, imports, facts and noise as what the CLI will see.
 //   CORPUS=<clones> pnpm tsx src/mutate.ts > ../data/generated/mutations.jsonl
-import { existsSync, readdirSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { parseSync } from 'oxc-parser'
 import { chunksFor, withFacts } from './chunks.js'
@@ -14,9 +14,15 @@ const TRAIN_REPOS = ['vercel__nextjs-subscription-payments', 'makerkit__nextjs-s
   'usebasejump__basejump', 'devtodollars__mvp-boilerplate', 'ShenSeanChen__launch-mvp-stripe-nextjs-supabase', 'Razikus__supabase-nextjs-template',
   'ibelick__zola', 'matiasbattocchia__open-bsp-api', 'supabase__supabase', 'vercel__next.js']
 const corpus = process.env.CORPUS!
+const readLines = (p: string) => existsSync(p) ? readFileSync(p, 'utf8').split('\n').map((l) => l.trim()).filter(Boolean) : []
 // CORPUS2: extra permissive repos from scripts/corpus_discover.exs (owner__repo dirs; gold repos already excluded)
+// Eval-only repos (no permissive licence) are gold labels only: never mutate them into training rows.
+const evalOnly = new Set([
+  ...readLines(join(import.meta.dirname, '../../data/gold/eval-only-repos.txt')),
+  ...(process.env.CORPUS2 ? readLines(join(process.env.CORPUS2, 'manifest.jsonl')).map((l) => JSON.parse(l)).filter((m) => m.eval_only).map((m) => m.repo) : []),
+].map((r) => r.replace('/', '__')))
 const extra = process.env.CORPUS2 && existsSync(process.env.CORPUS2)
-  ? readdirSync(process.env.CORPUS2).filter((d) => d.includes('__')).map((d) => join(process.env.CORPUS2!, d)) : []
+  ? readdirSync(process.env.CORPUS2).filter((d) => d.includes('__') && !evalOnly.has(d)).map((d) => join(process.env.CORPUS2!, d)) : []
 const repoDirs = [...TRAIN_REPOS.map((r) => join(corpus, r)), ...extra]
 let n = 0
 const emit = (rule: string, label: number, state: string, repo: string, kind: string) =>

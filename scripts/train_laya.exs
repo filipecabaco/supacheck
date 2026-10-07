@@ -5,11 +5,14 @@
 #   elixir scripts/train_laya.exs --name laya-supacheck [--base typed-decisions] [--epochs 3]
 #   elixir scripts/train_laya.exs --name laya-supacheck --eval-only
 #   elixir scripts/train_laya.exs --eval-model typed-decisions        # zero-shot baseline
+#   elixir scripts/train_laya.exs --export artifacts/laya-supacheck [--out artifacts/laya-supacheck-onnx]
+#     ONNX (encoder.onnx + head.onnx + tokenizer.json + rl_agent_config.json + supacheck.json) for the
+#     CLI's laya-ts runtime; --out defaults to <model dir>-onnx.
 
 Mix.install([{:pythonx, "~> 0.4.10"}])
 
 defmodule TrainLaya do
-  @switches [name: :string, base: :string, epochs: :integer, eval_only: :boolean, eval_model: :string, micro_batch: :integer]
+  @switches [name: :string, base: :string, epochs: :integer, eval_only: :boolean, eval_model: :string, micro_batch: :integer, export: :string, out: :string]
 
   def run(argv, root) do
     {opts, _} = OptionParser.parse!(argv, strict: @switches)
@@ -22,6 +25,7 @@ defmodule TrainLaya do
   # What to do is decided once, from the flags; each mode is a plain data tuple.
   defp mode(opts, root) do
     cond do
+      model = opts[:export] -> {:export, Path.expand(model, root), Path.expand(opts[:out] || model <> "-onnx", root)}
       model = opts[:eval_model] -> {:eval, model}
       opts[:eval_only] -> {:eval, artifact_dir(opts, root)}
       true -> {:train, artifact_dir(opts, root)}
@@ -39,14 +43,20 @@ defmodule TrainLaya do
     summary =
       call(g, "laya_ft.finetune(cfg)", %{
         "data" => path,
-        "base" => Keyword.get(opts, :base, "typed-decisions"),
+        "base" => Keyword.get(opts, :base, Path.join(root, "models/laya-typed-decisions")),
         "out_dir" => out_dir,
         "epochs" => Keyword.get(opts, :epochs, 3),
-        "micro_batch" => Keyword.get(opts, :micro_batch, 4)
+        "micro_batch" => Keyword.get(opts, :micro_batch, 2)
       })
 
     IO.puts("finetune: #{inspect(summary, limit: 20)}")
     execute({:eval, out_dir}, opts, g, root)
+  end
+
+  defp execute({:export, model, out_dir}, _opts, g, root) do
+    result = call(g, "laya_ft.export_onnx(cfg)", %{"model_dir" => model, "out_dir" => out_dir, "rules_dir" => Path.join(root, "rules")})
+    IO.puts("exported #{result["rules"]} rules to #{out_dir} (max torch/onnx prob diff #{result["max_prob_diff"]})")
+    for {file, bytes} <- result["sizes"], do: IO.puts("  #{String.pad_trailing(file, 22)} #{div(bytes, 1_000_000)} MB")
   end
 
   defp execute({:eval, model}, _opts, g, root) do

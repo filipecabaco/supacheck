@@ -1,0 +1,6 @@
+Vendored from https://github.com/NandhaKishorM/laya (laya-ts, Apache-2.0) at commit a4a8921.
+Unmodified except where noted in this file.
+
+Modifications:
+- Dropped router.ts, lang.ts, email.ts, presets.ts, shortlist.ts, dx.ts (unused by supacheck).
+- index.ts reduced to the Agent exports.

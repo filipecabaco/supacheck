@@ -8,6 +8,8 @@ export function loadRules(dir) {
 }
 /** A rule is asked only when the chunk kind fits and one of its trigger literals appears. */
 export function applicable(rule, chunk) {
+    if (!rule.applies_to)
+        return false;
     const kindOk = rule.applies_to.includes(chunk.kind) || (chunk.kind === 'trigger' && rule.applies_to.includes('function'));
     if (!kindOk)
         return false;
