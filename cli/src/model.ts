@@ -19,7 +19,7 @@ export type Manifest = {
 /** What ensureModel is doing, for front-ends that explain the wait. */
 export type ModelEvent =
   | { step: 'cached'; tag: string; dir: string; bytes: number }
-  | { step: 'wait'; tag: string; pid?: number }
+  | { step: 'wait'; tag: string; pid?: number; lock: string }
   | { step: 'manifest'; tag: string; url: string }
   | { step: 'download'; tag: string; bytes: number; total: number; parts: number; partsDone: number; resumed: number }
   | { step: 'retry'; asset: string; attempt: number; of: number; reason: string }
@@ -35,6 +35,8 @@ const MANIFEST_TIMEOUT = 15_000
 const STALL_TIMEOUT = 20_000
 const ATTEMPTS = 5
 const STALE_LOCK = 30 * 60_000
+/** A lock without a pid (left by an older supacheck, or a crash right after mkdir) is stale after this. */
+const STALE_PIDLESS_LOCK = 60_000
 
 const cacheRoot = () => process.env.SUPACHECK_CACHE ?? join(homedir(), '.cache', 'supacheck', 'models')
 const sha256File = async (path: string) => {
@@ -67,9 +69,9 @@ export async function ensureModel(repo = DEFAULT_MODEL.repo, tag = DEFAULT_MODEL
     if (existsSync(marker)) return ready()
     const pid = lockOwner(lock)
     let stale = pid !== undefined && !alive(pid)
-    try { stale ||= Date.now() - statSync(lock).mtimeMs > STALE_LOCK } catch {}
+    try { stale ||= Date.now() - statSync(lock).mtimeMs > (pid === undefined ? STALE_PIDLESS_LOCK : STALE_LOCK) } catch {}
     if (stale) { rmSync(lock, { recursive: true, force: true }); continue }
-    if (!waiting) { waiting = true; emit({ step: 'wait', tag, pid }); log(`supacheck: waiting for another supacheck${pid ? ` (pid ${pid})` : ''} to finish downloading the model…`) }
+    if (!waiting) { waiting = true; emit({ step: 'wait', tag, pid, lock }); log(`supacheck: waiting for another supacheck${pid ? ` (pid ${pid})` : ''} to finish downloading the model…`) }
     await sleep(1000)
   }
   try {

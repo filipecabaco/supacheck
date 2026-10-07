@@ -76,7 +76,8 @@ export class ProgressView {
         if (e.step === 'cached')
             this.done(`${label('Model')} ${e.tag.replace(/^model-/, '')} ${pc.dim('·')} ${size(e.bytes)} ${pc.dim(`cached in ${tilde(e.dir)}`)}`);
         else if (e.step === 'wait')
-            this.spin(`${label('Model')} another supacheck${e.pid ? ` (pid ${e.pid})` : ''} is downloading it, waiting`, 'slow');
+            this.spin(e.pid ? `${label('Model')} another supacheck (pid ${e.pid}) is downloading it, waiting`
+                : `${label('Model')} found a download lock with no owner, taking it over within a minute ${pc.dim(`(${tilde(e.lock)})`)}`, 'slow');
         else if (e.step === 'manifest')
             this.spin(`${label('Model')} first run: fetching the ${e.tag} manifest from ${e.url.replace(/^https?:\/\//, '').split('/').slice(0, 3).join('/')}`, 'slow');
         else if (e.step === 'download') {
