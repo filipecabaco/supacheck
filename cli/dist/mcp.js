@@ -4,7 +4,7 @@ import { createInterface } from 'node:readline';
 import { runCheck } from './check.js';
 const TOOL = {
     name: 'supacheck_check',
-    description: 'Check a Supabase project (SQL migrations + supabase-js code) for security anti-patterns. Returns findings with the facts they rest on, a fix, and fixes to avoid (never disable RLS or GRANT ALL to anon to silence a finding).',
+    description: 'Check a Supabase project (SQL migrations + supabase-js code) for security anti-patterns: deterministic rules over facts, plus a local model for the judgement calls they leave open (downloads 1.7 GB on first use). Returns findings with the facts they rest on, a fix, and fixes to avoid (never disable RLS or GRANT ALL to anon to silence a finding).',
     inputSchema: {
         type: 'object',
         properties: {

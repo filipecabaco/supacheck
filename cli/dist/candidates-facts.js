@@ -23,7 +23,7 @@ for (const dir of dirs) {
         continue;
     }
     const url = (file) => `https://github.com/${repo}/blob/${sha}/${file}`;
-    const { findings } = await runCheck(dir, { experimental: true });
+    const { findings } = await runCheck(dir, { experimental: true, model: false });
     for (const f of findings.filter((x) => RULES.includes(x.rule_id)))
         pool.push({ url: url(f.file), line: f.line, rule: f.rule_id, kind: 'facts', repo, teacher_p: 1, flagged: true });
     // near-misses for first-signup: triggers that assign an admin/owner role without an emptiness check

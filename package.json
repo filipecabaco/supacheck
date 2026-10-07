@@ -25,12 +25,10 @@
     "@clack/prompts": "1.8.1",
     "commander": "15.0.0",
     "libpg-query": "18.1.5",
+    "onnxruntime-node": "1.30.0",
     "oxc-parser": "0.153.0",
     "picocolors": "1.1.1",
     "wrap-ansi": "10.0.2",
     "yaml": "2.9.1"
-  },
-  "optionalDependencies": {
-    "onnxruntime-node": "1.30.0"
   }
 }

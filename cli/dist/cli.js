@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// supacheck check [dir] [--format text|json|sarif] [--strict] [--all-grants] [--experimental] [--model] [--model-dir <dir>]
+// supacheck check [dir] [--format text|json|sarif] [--strict] [--all-grants] [--experimental] [--model-dir <dir>]
 // supacheck mcp                              (stdio MCP server exposing supacheck_check)
 // supacheck chunks <paths...>                (hidden, dev: model input chunks)
 //
@@ -36,9 +36,11 @@ program.command('check', { isDefault: true })
     .option('--strict', 'exit 1 on any finding, not just critical/high')
     .option('--experimental', 'add rules still being validated')
     .option('--all-grants', 'report missing grants on tables created before 2026-10-30 too')
-    .option('--model', 'add experimental model checks (downloads 1.7 GB once)')
-    .option('--model-dir <dir>', 'use a local model directory instead of downloading')
+    .option('--model-dir <dir>', 'use a local model directory instead of the release download')
+    .addOption(new Option('--model', 'no-op: the model always runs').hideHelp())
     .addHelpText('after', `
+The model is downloaded once (1.7 GB, from GitHub Releases) and cached in ~/.cache/supacheck/models.
+
 Exit codes: 0 clean or only warnings/info · 1 critical or high findings · 2 usage error or model unavailable
 
 Examples:
@@ -74,19 +76,21 @@ async function check(dir, o) {
         process.exitCode = 2;
         return;
     }
-    const wantsModel = o.model || !!o.modelDir;
-    const view = o.format === 'text' ? new ProgressView(wantsModel) : undefined;
+    const view = o.format === 'text' ? new ProgressView() : undefined;
     view?.intro(dir === '.' ? basename(process.cwd()) : dir, VERSION);
     const t0 = Date.now();
     let result;
     try {
-        result = await runCheck(dir, { allGrants: o.allGrants, experimental: o.experimental, model: o.model, modelDir: o.modelDir, onProgress: view?.on });
+        result = await runCheck(dir, { allGrants: o.allGrants, experimental: o.experimental, modelDir: o.modelDir, onProgress: view?.on });
     }
     catch (e) {
         view?.stop();
         if (!(e instanceof ModelUnavailable))
             throw e;
-        fail(e.message.replace(/ \(run without.*\)$/, ''), 'Run without --model / --model-dir to use the rule checks only.');
+        const network = /download|manifest|fetch failed|ENOTFOUND|ECONN|timed? ?out|stalled/i.test(e.message);
+        fail(e.message, o.modelDir ? 'Check that --model-dir points at a model directory (supacheck.json plus the .onnx files).'
+            : network ? 'The model downloads from GitHub Releases on first run: check your connection and run again (finished parts are kept).'
+                : 'The cached model looks broken: delete ~/.cache/supacheck/models and run again.');
         process.exitCode = 2;
         return;
     }

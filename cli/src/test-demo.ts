@@ -6,7 +6,7 @@ import { runCheck } from './check.js'
 
 const demo = resolve(import.meta.dirname, '../../examples/demo-app')
 const expectedPath = join(demo, 'expected-findings.json')
-const { findings } = await runCheck(demo)
+const { findings } = await runCheck(demo, { model: false })
 const actual = findings.map((f) => ({ rule_id: f.rule_id, file: f.file, line: f.line }))
   .sort((a, b) => a.file.localeCompare(b.file) || a.line - b.line || a.rule_id.localeCompare(b.rule_id))
 if (process.env.UPDATE) { writeFileSync(expectedPath, JSON.stringify(actual, null, 1)); console.log('updated'); process.exit(0) }

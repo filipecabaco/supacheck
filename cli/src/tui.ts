@@ -2,11 +2,13 @@
 // findings report on stdout. Colours via picocolors (NO_COLOR / FORCE_COLOR / TTY aware).
 // --format json/sarif never come through here.
 import { existsSync, readFileSync } from 'node:fs'
+import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { intro, isCI, isTTY, log, outro, progress, spinner, type ProgressResult, type SpinnerResult } from '@clack/prompts'
 import pc from 'picocolors'
 import wrapAnsi from 'wrap-ansi'
 import type { Finding, Progress } from './check.js'
+import type { ModelEvent } from './model.js'
 
 const SEVERITIES = ['critical', 'high', 'error', 'warning', 'info'] as const
 const BLOCKING = new Set(['critical', 'high', 'error'])
@@ -14,9 +16,10 @@ const tone = (sev: string) => (sev === 'critical' || sev === 'error' ? (t: strin
 const MARK: Record<string, string> = { critical: '●', high: '●', error: '●', warning: '▲', info: '○' }
 
 const plural = (n: number, one: string, many = one + 's') => `${n} ${n === 1 ? one : many}`
-const seconds = (ms: number) => (ms < 1000 ? `${Math.max(1, Math.round(ms))}ms` : `${(ms / 1000).toFixed(1)}s`)
+const seconds = (ms: number) => (ms < 1000 ? `${Math.max(1, Math.round(ms))}ms` : ms < 60_000 ? `${(ms / 1000).toFixed(1)}s` : `${Math.floor(ms / 60_000)}m ${Math.round((ms % 60_000) / 1000)}s`)
 const size = (b: number) => (b >= 1e9 ? `${(b / 1e9).toFixed(2)} GB` : `${(b / 1e6).toFixed(0)} MB`)
 const label = (l: string) => pc.bold(l.padEnd(6))
+const tilde = (p: string) => (p.startsWith(homedir()) ? '~' + p.slice(homedir().length) : p)
 
 /** Interactive only on a real terminal outside CI; otherwise progress stays silent (the report still prints). */
 export const interactive = (out: NodeJS.WriteStream = process.stderr) => isTTY(out) && !isCI() && process.env.TERM !== 'dumb' && (out.columns ?? 0) >= 40
@@ -27,13 +30,15 @@ export class ProgressView {
   private live?: SpinnerResult
   private bar?: ProgressResult
   private barAt = 0
-  private dl?: { t0: number; b0: number; total: number }
-  private phase?: 'download' | 'score'
+  private tick?: NodeJS.Timeout
+  private dl?: { t0: number; resumed: number; total: number; samples: [number, number][]; painted: number; note?: string }
+  private score?: { t0: number }
+  private assembling?: number
   private started = Date.now()
   private readonly out = process.stderr
   private readonly on_: boolean
 
-  constructor(private modelRequested = false) {
+  constructor() {
     this.on_ = interactive(this.out)
   }
 
@@ -42,14 +47,7 @@ export class ProgressView {
   }
 
   on = (e: Progress) => {
-    if (!this.on_) {
-      // non-interactive: one line for the only slow, surprising step
-      if (e.stage === 'download' && !this.dl) {
-        this.dl = { t0: Date.now(), b0: e.bytes, total: e.total }
-        this.out.write(`supacheck: downloading the model once (${size(e.total)}), cached for later runs…\n`)
-      }
-      return
-    }
+    if (!this.on_) return this.plain(e)
 
     if (e.stage === 'sql' && !e.done) this.spin(`${label('SQL')} replaying ${plural(e.files, 'migration file')}`)
     else if (e.stage === 'sql' && e.done) this.done(!e.files ? `${label('SQL')} ${pc.dim('no migrations found')}`
@@ -57,42 +55,101 @@ export class ProgressView {
     else if (e.stage === 'code' && !e.done) this.spin(`${label('Code')} reading ${plural(e.files, 'file')}`)
     else if (e.stage === 'code' && e.done) {
       this.done(`${label('Code')} ${plural(e.files, 'file')} ${pc.dim('·')} ${plural(e.rules, 'rule')} checked`)
-      if (this.modelRequested) this.spin(`${label('Model')} loading`)
-    } else if (e.stage === 'download') {
-      if (this.phase !== 'download') {
-        this.phase = 'download'
-        this.dl = { t0: Date.now(), b0: e.bytes, total: e.total }
-        this.startBar(e.total, `${label('Model')} downloading ${size(e.total)}, once`)
+      this.spin(`${label('Model')} looking for the cached model`, 'slow')
+    } else if (e.stage === 'fetch') this.fetch(e.event)
+    else if (e.stage === 'load' && !e.done) this.spin(`${label('Load')} loading ${size(e.bytes)} of weights into ONNX Runtime ${pc.dim('(can take a few seconds)')}`, 'slow')
+    else if (e.stage === 'load' && e.done) this.done(`${label('Load')} ${e.kind === 'laya' ? 'Laya decision model' : 'classifier'} ready ${pc.dim('(ONNX Runtime, CPU)')}`)
+    else if (e.stage === 'prepare' && !e.done) this.spin(`${label('Chunks')} splitting ${plural(e.files, 'file')} into functions and statements for the model`, 'slow')
+    else if (e.stage === 'prepare' && e.done) this.done(`${label('Chunks')} ${plural(e.chunks, 'chunk')} for the model${e.settled ? pc.dim(` · ${e.settled} already settled by facts`) : ''}`)
+    else if (e.stage === 'model' && !e.done) {
+      if (!this.score) {
+        this.score = { t0: Date.now() }
+        this.startBar(Math.max(1, e.total), `${label('Score')} asking ${plural(e.rules, 'rule question')} about ${plural(e.total, 'chunk')}`)
       }
-      const rate = (e.bytes - this.dl!.b0) / Math.max(0.001, (Date.now() - this.dl!.t0) / 1000)
-      this.advance(e.bytes, `${label('Model')} ${size(e.bytes)} / ${size(e.total)}${rate > 0 ? pc.dim(`  ${(rate / 1e6).toFixed(0)} MB/s`) : ''}`)
-    } else if (e.stage === 'model' && !e.done) {
-      if (this.phase !== 'score') {
-        if (this.phase === 'download') this.done(`${label('Model')} downloaded ${size(this.dl!.total)} ${pc.dim('(cached for next time)')}`)
-        this.phase = 'score'
-        this.startBar(Math.max(1, e.total), `${label('Model')} scoring ${plural(e.total, 'chunk')}`)
-      }
-      this.advance(e.scored, `${label('Model')} scoring ${e.scored}/${e.total}`)
-    } else if (e.stage === 'model' && e.done) this.done(`${label('Model')} ${plural(e.scored, 'chunk')} scored ${pc.dim('·')} ${plural(e.rules, 'rule')} ${pc.magenta('experimental')}`)
+      const left = e.scored ? ((Date.now() - this.score.t0) / e.scored) * (e.total - e.scored) : 0
+      this.advance(e.scored, `${label('Score')} ${e.scored}/${e.total} chunks${left > 1500 ? pc.dim(`  ~${seconds(left)} left`) : ''}`)
+    } else if (e.stage === 'model' && e.done) this.done(`${label('Score')} ${plural(e.scored, 'chunk')} scored ${pc.dim('·')} ${plural(e.rules, 'rule')} ${pc.dim('·')} ${e.findings ? pc.magenta(plural(e.findings, 'finding')) : 'no findings'} ${pc.magenta('experimental')}`)
   }
 
-  private advance(to: number, msg: string) {
+  private fetch(e: ModelEvent) {
+    if (e.step === 'cached') this.done(`${label('Model')} ${e.tag.replace(/^model-/, '')} ${pc.dim('·')} ${size(e.bytes)} ${pc.dim(`cached in ${tilde(e.dir)}`)}`)
+    else if (e.step === 'wait') this.spin(`${label('Model')} another supacheck${e.pid ? ` (pid ${e.pid})` : ''} is downloading it, waiting`, 'slow')
+    else if (e.step === 'manifest') this.spin(`${label('Model')} first run: fetching the ${e.tag} manifest from ${e.url.replace(/^https?:\/\//, '').split('/').slice(0, 3).join('/')}`, 'slow')
+    else if (e.step === 'download') {
+      const now = Date.now()
+      if (!this.dl) {
+        this.dl = { t0: now, resumed: e.resumed, total: e.total, samples: [[now, e.bytes]], painted: 0 }
+        const resumed = e.resumed ? pc.dim(` (resuming, ${size(e.resumed)} already here)`) : ''
+        this.startBar(e.total, `${label('Model')} downloading ${size(e.total)} once, in ${e.parts} parts${resumed}`)
+        this.advance(e.bytes, undefined)
+      }
+      const dl = this.dl
+      dl.samples.push([now, e.bytes])
+      while (dl.samples.length > 2 && now - dl.samples[0][0] > 5000) dl.samples.shift()
+      if (now - dl.painted < 120 && e.bytes < e.total) return // byte events arrive per network chunk; repaint ~8×/s
+      dl.painted = now
+      const [t0, b0] = dl.samples[0]
+      const rate = now > t0 ? ((e.bytes - b0) / (now - t0)) * 1000 : 0
+      const eta = rate > 0 ? ((e.total - e.bytes) / rate) * 1000 : 0
+      const stats = [`${e.partsDone}/${e.parts} parts`, rate > 0 ? `${(rate / 1e6).toFixed(1)} MB/s` : 'waiting for data', eta > 1500 ? `~${seconds(eta)} left` : ''].filter(Boolean).join(' · ')
+      this.advance(e.bytes, `${label('Model')} ${size(e.bytes)} / ${size(e.total)}  ${pc.dim(stats)}${dl.note ? pc.yellow(`  ${dl.note}`) : ''}`)
+    } else if (e.step === 'retry') {
+      if (this.dl) this.dl.note = `${e.asset} ${e.reason}, retry ${e.attempt}/${e.of}`
+    } else if (e.step === 'assemble') {
+      if (this.dl) {
+        this.done(`${label('Model')} downloaded ${size(this.dl.total - this.dl.resumed)} ${pc.dim('· every part sha256-checked')}`)
+        this.dl = undefined
+      }
+      this.assembling ??= Date.now()
+      this.spin(`${label('Model')} joining parts and checking ${e.file} ${pc.dim(`(${e.index}/${e.count}, ${size(e.bytes)})`)}`, 'slow')
+    } else if (e.step === 'ready') {
+      this.started = this.assembling ?? this.started
+      this.done(`${label('Model')} ${e.tag.replace(/^model-/, '')} ${pc.dim('·')} ${size(e.bytes)} ${pc.dim(`saved to ${tilde(e.dir)} for next time`)}`)
+    }
+  }
+
+  /** Non-interactive (CI, pipes): a line for each slow step, so a log never looks hung. */
+  private plain(e: Progress) {
+    const say = (m: string) => this.out.write(`supacheck: ${m}\n`)
+    if (e.stage === 'fetch') {
+      const f = e.event
+      if (f.step === 'wait') say(`waiting for another supacheck${f.pid ? ` (pid ${f.pid})` : ''} to finish downloading the model…`)
+      else if (f.step === 'download' && !this.dl) {
+        this.dl = { t0: Date.now(), resumed: f.resumed, total: f.total, samples: [], painted: 0 }
+        say(`downloading the model once (${size(f.total)}${f.resumed ? `, ${size(f.resumed)} already here` : ''}), cached for later runs…`)
+      } else if (f.step === 'retry') say(`${f.asset}: ${f.reason}, retrying (${f.attempt}/${f.of})`)
+      else if (f.step === 'ready') say(`model saved to ${f.dir}`)
+    } else if (e.stage === 'load' && !e.done) say(`loading the model (${size(e.bytes)})…`)
+    else if (e.stage === 'model' && !e.done && !this.score) {
+      this.score = { t0: Date.now() }
+      say(`model scoring ${plural(e.total, 'chunk')}…`)
+    }
+  }
+
+  private advance(to: number, msg: string | undefined) {
     if (to > this.barAt) this.bar?.advance(to - this.barAt, msg)
+    else if (msg) this.bar?.message(msg)
     this.barAt = Math.max(this.barAt, to)
   }
 
   /** Clear whatever is still animating (before an error or the report). */
   stop() {
+    clearInterval(this.tick)
     this.live?.clear()
     this.bar?.clear()
     this.live = this.bar = undefined
   }
 
-  private spin(msg: string) {
+  /** slow: a step whose length depends on the machine or network; shows elapsed seconds once it passes 2s. */
+  private spin(msg: string, slow: 'slow' | '' = '') {
     this.stop()
     this.started = Date.now()
     this.live = spinner({ output: this.out, indicator: 'dots' })
     this.live.start(msg)
+    if (slow) this.tick = setInterval(() => {
+      const ms = Date.now() - this.started
+      if (ms >= 2000) this.live?.message(`${msg}  ${pc.dim(seconds(ms).replace(/\.\ds$/, 's'))}`)
+    }, 1000).unref()
   }
 
   private startBar(max: number, msg: string) {
@@ -106,9 +163,11 @@ export class ProgressView {
   private done(msg: string) {
     const took = pc.dim(seconds(Date.now() - this.started))
     const active = this.live ?? this.bar
+    clearInterval(this.tick)
     this.live = this.bar = undefined
     if (active) active.stop(`${msg}  ${took}`)
     else log.success(`${msg}  ${took}`, { output: this.out })
+    this.started = Date.now()
   }
 }
 

@@ -13,7 +13,9 @@ import { Readable } from 'node:stream';
 export const MODEL_TAG = 'model-laya-v1';
 export const DEFAULT_MODEL = { repo: process.env.SUPACHECK_MODEL_REPO ?? 'filipecabaco/supacheck', tag: process.env.SUPACHECK_MODEL_TAG ?? MODEL_TAG };
 const MANIFEST_TIMEOUT = 15_000;
-const PART_TIMEOUT = 10 * 60_000;
+/** A part that sends no bytes for this long is aborted and retried, instead of hanging the run. */
+const STALL_TIMEOUT = 20_000;
+const ATTEMPTS = 5;
 const STALE_LOCK = 30 * 60_000;
 const cacheRoot = () => process.env.SUPACHECK_CACHE ?? join(homedir(), '.cache', 'supacheck', 'models');
 const sha256File = async (path) => {
@@ -21,69 +23,112 @@ const sha256File = async (path) => {
     await pipeline(createReadStream(path), h);
     return h.digest('hex');
 };
+const modelBytes = (m) => m.files.reduce((n, f) => n + f.size, 0);
 /** Local directory with the verified model files, downloading the release on first use. */
-/** onBytes: byte-level download progress for interactive front-ends; when given, the text log is off by default. */
-export async function ensureModel(repo = DEFAULT_MODEL.repo, tag = DEFAULT_MODEL.tag, log, onBytes) {
-    log ??= onBytes ? () => { } : (m) => process.stderr.write(m + '\n');
+/** onEvent: step-by-step progress for interactive front-ends; when given, the text log is off by default. */
+export async function ensureModel(repo = DEFAULT_MODEL.repo, tag = DEFAULT_MODEL.tag, log, onEvent) {
+    log ??= onEvent ? () => { } : (m) => process.stderr.write(m + '\n');
+    const emit = onEvent ?? (() => { });
     const dir = join(cacheRoot(), tag);
     const marker = join(dir, '.complete');
-    const ready = () => ({ dir, manifest: JSON.parse(readFileSync(join(dir, 'manifest.json'), 'utf8')) });
+    const ready = () => {
+        const manifest = JSON.parse(readFileSync(join(dir, 'manifest.json'), 'utf8'));
+        emit({ step: 'cached', tag, dir, bytes: modelBytes(manifest) });
+        return { dir, manifest };
+    };
     if (existsSync(marker))
         return ready();
-    // One downloader per tag: concurrent runs (CLI + MCP + hooks) wait for it instead of racing on the same files
+    // One downloader per tag: concurrent runs (CLI + MCP + hooks) wait for it instead of racing on the same files.
+    // The lock holds the owner's pid, so a lock left by a killed run is taken over at once rather than after STALE_LOCK.
     mkdirSync(cacheRoot(), { recursive: true });
     const lock = dir + '.lock';
-    for (;;) {
+    for (let waiting = false;;) {
         try {
             mkdirSync(lock);
+            writeFileSync(join(lock, 'pid'), String(process.pid));
             break;
         }
         catch { }
         if (existsSync(marker))
             return ready();
+        const pid = lockOwner(lock);
+        let stale = pid !== undefined && !alive(pid);
         try {
-            if (Date.now() - statSync(lock).mtimeMs > STALE_LOCK)
-                rmSync(lock, { recursive: true, force: true });
+            stale ||= Date.now() - statSync(lock).mtimeMs > STALE_LOCK;
         }
         catch { }
+        if (stale) {
+            rmSync(lock, { recursive: true, force: true });
+            continue;
+        }
+        if (!waiting) {
+            waiting = true;
+            emit({ step: 'wait', tag, pid });
+            log(`supacheck: waiting for another supacheck${pid ? ` (pid ${pid})` : ''} to finish downloading the model…`);
+        }
         await sleep(1000);
     }
     try {
         if (existsSync(marker))
             return ready();
-        return await download(dir, repo, tag, log, onBytes);
+        return await download(dir, repo, tag, log, emit);
     }
     finally {
         rmSync(lock, { recursive: true, force: true });
     }
 }
-async function download(dir, repo, tag, log, onBytes) {
+function lockOwner(lock) {
+    try {
+        return Number(readFileSync(join(lock, 'pid'), 'utf8')) || undefined;
+    }
+    catch {
+        return undefined;
+    }
+}
+function alive(pid) {
+    try {
+        process.kill(pid, 0);
+        return true;
+    }
+    catch (e) {
+        return e.code === 'EPERM';
+    }
+}
+async function download(dir, repo, tag, log, emit) {
     const marker = join(dir, '.complete');
     mkdirSync(join(dir, '.parts'), { recursive: true });
     const base = process.env.SUPACHECK_MODEL_URL ?? `https://github.com/${repo}/releases/download/${tag}`; // override: mirrors, tests
+    emit({ step: 'manifest', tag, url: base });
     const res = await fetch(`${base}/manifest.json`, { signal: AbortSignal.timeout(MANIFEST_TIMEOUT) });
     if (!res.ok)
         throw new Error(`model manifest not found at ${base}/manifest.json (${res.status})`);
     const manifest = await res.json();
     const parts = manifest.files.flatMap((f) => f.parts);
     const total = parts.reduce((n, p) => n + p.size, 0);
-    let done = parts.filter((p) => partOk(dir, p)).reduce((n, p) => n + p.size, 0);
-    let inflight = 0; // bytes of parts still downloading, for onBytes
-    onBytes?.(done, total);
-    log(`supacheck: downloading model ${tag} (${(total / 1e6).toFixed(0)} MB, ${parts.length} parts)…`);
     const queue = parts.filter((p) => !partOk(dir, p));
+    let done = total - queue.reduce((n, p) => n + p.size, 0);
+    const resumed = done;
+    let partsDone = parts.length - queue.length;
+    let inflight = 0; // bytes of parts still downloading
+    const progress = () => emit({ step: 'download', tag, bytes: done + inflight, total, parts: parts.length, partsDone, resumed });
+    progress();
+    log(`supacheck: downloading model ${tag} (${(total / 1e6).toFixed(0)} MB, ${parts.length} parts${resumed ? `, ${(resumed / 1e6).toFixed(0)} MB already here` : ''})…`);
     const worker = async () => {
         for (let p = queue.shift(); p; p = queue.shift()) {
             const target = join(dir, '.parts', p.asset);
             for (let attempt = 1;; attempt++) {
+                let got = 0;
+                const abort = new AbortController();
+                let idle;
+                const arm = () => { clearTimeout(idle); idle = setTimeout(() => abort.abort(new Error(`stalled: no data for ${STALL_TIMEOUT / 1000}s`)), STALL_TIMEOUT); };
                 try {
-                    const r = await fetch(`${base}/${p.asset}`, { signal: AbortSignal.timeout(PART_TIMEOUT) });
+                    arm();
+                    const r = await fetch(`${base}/${p.asset}`, { signal: abort.signal });
                     if (!r.ok || !r.body)
                         throw new Error(`HTTP ${r.status}`);
                     const body = Readable.fromWeb(r.body);
-                    let got = 0;
-                    body.on('data', (c) => { got += c.length; inflight += c.length; onBytes?.(done + inflight, total); });
-                    await pipeline(body, createWriteStream(target + '.tmp')).finally(() => { inflight -= got; });
+                    body.on('data', (c) => { arm(); got += c.length; inflight += c.length; progress(); });
+                    await pipeline(body, createWriteStream(target + '.tmp'));
                     if ((await sha256File(target + '.tmp')) !== p.sha256)
                         throw new Error('checksum mismatch');
                     renameSync(target + '.tmp', target);
@@ -93,18 +138,29 @@ async function download(dir, repo, tag, log, onBytes) {
                     }
                     catch { } // keep the lock fresh on slow links
                     done += p.size;
+                    partsDone++;
                     log(`  ${(100 * done / total).toFixed(0)}%  ${p.asset}`);
                     break;
                 }
                 catch (e) {
-                    if (attempt >= 3)
-                        throw new Error(`failed to download ${p.asset}: ${e.message}`);
+                    const reason = abort.signal.aborted ? abort.signal.reason.message : e.message;
+                    if (attempt >= ATTEMPTS)
+                        throw new Error(`failed to download ${p.asset}: ${reason}`);
+                    emit({ step: 'retry', asset: p.asset, attempt: attempt + 1, of: ATTEMPTS, reason });
+                    log(`  retrying ${p.asset} (${reason})`);
+                    await sleep(1000 * attempt);
+                }
+                finally {
+                    clearTimeout(idle);
+                    inflight -= got;
+                    progress();
                 }
             }
         }
     };
     await Promise.all(Array.from({ length: 6 }, worker));
-    for (const f of manifest.files) {
+    for (const [i, f] of manifest.files.entries()) {
+        emit({ step: 'assemble', file: f.name, index: i + 1, count: manifest.files.length, bytes: f.size });
         const out = join(dir, f.name);
         const tmp = out + '.tmp';
         rmSync(tmp, { force: true });
@@ -117,6 +173,7 @@ async function download(dir, repo, tag, log, onBytes) {
     writeFileSync(join(dir, 'manifest.json'), JSON.stringify(manifest, null, 2));
     rmSync(join(dir, '.parts'), { recursive: true, force: true });
     writeFileSync(marker, new Date().toISOString());
+    emit({ step: 'ready', tag, dir, bytes: modelBytes(manifest) });
     log(`supacheck: model ready (${dir})`);
     return { dir, manifest };
 }

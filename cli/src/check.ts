@@ -1,6 +1,6 @@
-// Core check: facts-engine rules always run; model rules only with --model / --model-dir.
+// Core check: facts-engine rules settle what they can; the model judges the chunks they leave open.
 // Shared by the CLI (text/json/sarif) and the MCP server.
-import { existsSync, lstatSync, readFileSync, readdirSync } from 'node:fs'
+import { existsSync, lstatSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
 import { dirname, join, relative, resolve } from 'node:path'
 import { chunksFor, withFacts } from './chunks.js'
@@ -8,7 +8,7 @@ import { buildFacts, type Facts } from './facts.js'
 import { buildTsFacts, factsFor } from './tsfacts.js'
 import { alwaysTrueWrite, definerNoCallerCheck, firstSignupAdmin, rlsDisabled, serviceRolePolicyWithoutTo, grantWriteWithoutRls, missingGrants, policyAuthenticated, selectTrueOnPrivate, singleVerdict, sqlFactLines, suppressedBy, tsExtraVerdicts, tsRuleVerdict, userMetadataSql, userMetadataTs } from './checks.js'
 import { applicable, loadRules, type Rule } from './rules.js'
-import { ensureModel } from './model.js'
+import { ensureModel, type ModelEvent } from './model.js'
 import { loadScorer, type Scorer } from './scorer.js'
 
 export type Finding = {
@@ -16,18 +16,23 @@ export type Finding = {
   message: string; fix: string; avoid: string[]; docs_url: string
   because?: string[]; facts?: string[]; probability?: number; threshold?: number
 }
-/** model: use the pinned release model (downloaded once, then cached); modelDir: a local model dir (implies model). */
+/** model: on by default (the pinned release model, downloaded once, then cached); false runs the facts rules only (dev tools).
+ *  modelDir: a local model dir instead of the release. */
 export type CheckOptions = { model?: boolean; modelDir?: string; allGrants?: boolean; rulesDir?: string; experimental?: boolean; onProgress?: (e: Progress) => void }
 
-/** Stage events for interactive front-ends (the CLI's live progress); stage order: sql, code, model. */
+/** Stage events for interactive front-ends (the CLI's live progress); stage order: sql, code, fetch, load, prepare, model. */
 export type Progress =
   | { stage: 'sql'; done: false; files: number }
   | { stage: 'sql'; done: true; files: number; projects: number; tables: number; policies: number; functions: number }
   | { stage: 'code'; done: false; files: number }
   | { stage: 'code'; done: true; files: number; rules: number }
-  | { stage: 'download'; bytes: number; total: number }
-  | { stage: 'model'; done: false; scored: number; total: number }
-  | { stage: 'model'; done: true; scored: number; rules: number }
+  | { stage: 'fetch'; event: ModelEvent }
+  | { stage: 'load'; done: false; dir: string; bytes: number }
+  | { stage: 'load'; done: true; kind: 'laya' | 'heads' }
+  | { stage: 'prepare'; done: false; files: number }
+  | { stage: 'prepare'; done: true; chunks: number; settled: number }
+  | { stage: 'model'; done: false; scored: number; total: number; rules: number }
+  | { stage: 'model'; done: true; scored: number; rules: number; findings: number }
 
 /** Rules ship next to dist/ in the package; fall back to the repo's rules/ during development. */
 export function defaultRulesDir() {
@@ -114,13 +119,15 @@ export async function runCheck(root: string, opts: CheckOptions = {}): Promise<{
 
   progress({ stage: 'code', done: true, files: codeFiles.length, rules: new Set([...rules.filter((r) => { const e = String((r as any).engine ?? ''); return e === 'facts' || (e === 'facts-experimental' && !!opts.experimental) }).map((r) => r.id)]).size })
 
-  // Model (opt-in): judgement calls facts can't settle. Fetched once from the GitHub Release (cached), or a local dir.
-  const scorer = opts.model || opts.modelDir ? await loadModelScorer(opts.modelDir, opts.rulesDir ?? defaultRulesDir(), progress) : undefined
+  // Model: judgement calls facts can't settle. Fetched once from the GitHub Release (cached), or a local dir.
+  const scorer = opts.model !== false || opts.modelDir ? await loadModelScorer(opts.modelDir, opts.rulesDir ?? defaultRulesDir(), progress) : undefined
   if (scorer) {
     const modelRules = rules.filter((r) => scorer.rules.includes(r.id) && (r as any).engine !== 'facts')
     type Job = { rel: string; line: number; facts: string[]; state: string; open: Rule[] }
     // Chunks asking the same rules share one forward pass per batch
     const groups = new Map<string, Job[]>()
+    let settled = 0 // chunks the facts already answer for every rule the model would be asked
+    progress({ stage: 'prepare', done: false, files: files.length })
     for (const file of files) {
       for (const chunk of await chunksFor(file)) {
         const asked = modelRules.filter((r) => applicable(r, chunk))
@@ -130,14 +137,15 @@ export async function runCheck(root: string, opts: CheckOptions = {}): Promise<{
         const facts = rel.endsWith('.sql') ? (st ? sqlFactLines(st, rel, chunk.line) : []) : factsFor(ts, rel, chunk.state)
         const state = withFacts(chunk.state, facts)
         const open = asked.filter((r) => !suppressedBy(r.id, state, facts))
-        if (!open.length) continue
+        if (!open.length) { settled++; continue }
         const key = open.map((r) => r.id).join(',')
         groups.set(key, [...(groups.get(key) ?? []), { rel, line: chunk.line, facts, state, open }])
       }
     }
     const total = [...groups.values()].reduce((n, j) => n + j.length, 0)
+    progress({ stage: 'prepare', done: true, chunks: total, settled })
     let scored = 0
-    progress({ stage: 'model', done: false, scored, total })
+    progress({ stage: 'model', done: false, scored, total, rules: modelRules.length })
     for (const jobs of groups.values()) {
       // similar lengths together: a batch pads to its longest state
       jobs.sort((a, b) => a.state.length - b.state.length)
@@ -153,10 +161,10 @@ export async function runCheck(root: string, opts: CheckOptions = {}): Promise<{
           }
         })
         scored += batch.length
-        progress({ stage: 'model', done: false, scored, total })
+        progress({ stage: 'model', done: false, scored, total, rules: modelRules.length })
       }
     }
-    progress({ stage: 'model', done: true, scored, rules: modelRules.length })
+    progress({ stage: 'model', done: true, scored, rules: modelRules.length, findings: findings.filter((f) => f.engine === 'model').length })
   }
   return { files: files.length, findings: dedupe(findings) }
 }
@@ -213,14 +221,22 @@ export function walk(p: string): string[] {
 const MODEL_BATCH = Math.max(1, Number(process.env.SUPACHECK_MODEL_BATCH) || 1)
 const round = (x: number) => Math.round(x * 1000) / 1000
 
-/** The model was asked for explicitly, so failing to load it is an error rather than a silent facts-only run. */
+/** The model is part of every check, so failing to load it is an error rather than a silent facts-only run. */
 export class ModelUnavailable extends Error {}
 
 async function loadModelScorer(modelDir: string | undefined, rulesDir: string, progress: (e: Progress) => void): Promise<Scorer> {
   try {
-    const dir = modelDir ?? (await ensureModel(undefined, undefined, undefined, (bytes, total) => progress({ stage: 'download', bytes, total }))).dir
-    return await loadScorer(dir, rulesDir)
+    const dir = modelDir ?? (await ensureModel(undefined, undefined, undefined, (event) => progress({ stage: 'fetch', event }))).dir
+    progress({ stage: 'load', done: false, dir, bytes: onnxBytes(dir) })
+    const scorer = await loadScorer(dir, rulesDir)
+    progress({ stage: 'load', done: true, kind: scorer.kind })
+    return scorer
   } catch (e) {
-    throw new ModelUnavailable(`model unavailable: ${(e as Error).message.split('\n')[0]} (run without --model/--model-dir for facts-only rules)`)
+    throw new ModelUnavailable(`model unavailable: ${(e as Error).message.split('\n')[0]}`)
   }
+}
+
+/** Size of the ONNX graphs ONNX Runtime has to map into memory. */
+function onnxBytes(dir: string) {
+  try { return readdirSync(dir).filter((f) => f.endsWith('.onnx')).reduce((n, f) => n + statSync(join(dir, f)).size, 0) } catch { return 0 }
 }

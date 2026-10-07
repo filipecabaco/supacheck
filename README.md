@@ -11,7 +11,11 @@ npx -y github:filipecabaco/supacheck check .
 ```
 
 Run it from your project root (the folder that contains `supabase/`). You need Node 22 or newer.
-Nothing else to install or configure, and no code leaves your machine.
+Nothing else to install or configure, and no code leaves your machine. The first run downloads the
+model (1.7 GB, once); after that everything runs offline.
+
+supacheck pairs deterministic rules with a small fine-tuned model: the rules settle what the facts
+in your migrations and code can prove, and the model makes the judgement calls they can't.
 
 ## What you'll see
 
@@ -20,6 +24,10 @@ Nothing else to install or configure, and no code leaves your machine.
 │
 ◇  SQL    1 file · 3 tables · 4 policies · 1 function  10ms
 ◇  Code   4 files · 13 rules checked  3ms
+◇  Model  laya-v1 · 1.69 GB cached in ~/.cache/supacheck/models/model-laya-v1  1ms
+◇  Load   Laya decision model ready (ONNX Runtime, CPU)  602ms
+◇  Chunks 7 chunks for the model  4ms
+◇  Score  7 chunks scored · 2 rules · 4 findings experimental  943ms
 │
 ■  CRITICAL · 4
 │
@@ -72,14 +80,13 @@ supacheck --help
 | `--strict` | Exit 1 on any finding, not just critical and high |
 | `--experimental` | Add rules that are still being validated |
 | `--all-grants` | Also report missing grants on tables created before 2026-10-30 |
-| `--model` | Add experimental model checks (see [Model checks](#model-checks-experimental)) |
-| `--model-dir <dir>` | Use a local model directory instead of downloading one |
+| `--model-dir <dir>` | Use a local model directory instead of the release download (see [The model](#the-model)) |
 
 A monorepo? Point it at the app folder: `supacheck check apps/web`. Each `supabase/` project is
 analysed on its own, so vendored examples and sibling apps don't mix.
 
 **Exit codes:** `0` clean, or only warnings and info; `1` critical or high findings (any finding with
-`--strict`); `2` usage error, or a model you asked for could not be loaded.
+`--strict`); `2` usage error, or the model could not be downloaded or loaded.
 
 **What gets scanned:** SQL, TypeScript and JavaScript files that git tracks or would track
 (`.gitignore` is respected), excluding `node_modules`, build output and tests. To skip more, add a
@@ -157,16 +164,17 @@ With `--experimental`: `policy-authenticated-not-authorized`, `admin-client-for-
 `cross-tenant-id-from-body` and `first-signup-becomes-admin` (all high), which are still being
 validated against real projects.
 
-## Model checks (experimental)
+## The model
 
-`--model` adds a fine-tuned [Laya](https://github.com/NandhaKishorM/laya) decision model
+Every check runs a fine-tuned [Laya](https://github.com/NandhaKishorM/laya) decision model
 (ModernBERT-large) for judgement calls the facts can't settle, such as whether a service-role client
-is doing per-user work. It runs locally with ONNX Runtime.
+is doing per-user work. It runs locally with ONNX Runtime, and the progress view shows each step:
+finding or downloading the model, loading it, picking the chunks the rules left open, and scoring them.
 
 - **First run:** downloads the model pinned to this CLI version from
   [GitHub Releases](https://github.com/filipecabaco/supacheck/releases/tag/model-laya-v1)
-  (1.7 GB, with a progress bar). Every part is verified by sha256, and an interrupted download
-  resumes where it stopped.
+  (1.7 GB, with progress, speed and time left). Every part is verified by sha256, a part that stalls
+  for 20 seconds is retried, and an interrupted download resumes where it stopped.
 - **After that:** runs offline from `~/.cache/supacheck/models` (set `SUPACHECK_CACHE` to move it).
 - **If it can't load,** the run exits with code 2 instead of silently falling back to the rules.
 
@@ -181,8 +189,7 @@ well below the rule checks, and its findings are labelled `model · experimental
    `verify_jwt` for each Edge Function.
 2. **Rules.** Deterministic checks run over those facts. That's why every finding can say *why*,
    and why precision is high on real code.
-3. **Model (optional).** The model answers each rule's question for code chunks the facts leave
-   open.
+3. **Model.** The model answers each rule's question for code chunks the facts leave open.
 
 ## Status
 
